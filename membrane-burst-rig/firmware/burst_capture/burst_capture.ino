@@ -64,7 +64,8 @@
 // Sensor scaling for the display and thresholds (0-100 psi, 10%..90% of supply,
 // ratiometric to the 3V3 that also feeds ADC_VREF).
 #define RANGE_PSI      100.0f
-#define COUNTS_PER_PSI (0.8f * 4095.0f / RANGE_PSI)   // 32.76
+#define COUNTS_PER_PSI (0.8f * 4095.0f / RANGE_PSI)   // 32.76, nominal; the menu's
+                                                       // Calibrate step stores per-channel values
 
 #define PRESSURIZED_PSI 2.0f    // LED2 and display-wake threshold
 #define BLANK_AFTER_MS  (5UL * 60UL * 1000UL)
@@ -123,7 +124,7 @@ static CollectState cstate = CS_WAIT;
 static bool     manual_armed = false;
 static bool     autoarm_blocked = false;    // until pressure falls below half the arm level
 static uint32_t above_ms = 0, below_ms = 0;
-static float    peak_counts = 0;
+static float    peak_psi = 0;
 
 // capture being held for the keep/drop prompt
 static uint32_t cap_start = 0;              // absolute sample index since restart
@@ -131,8 +132,8 @@ static PromptView prompt;
 static CapHdr   cap_hdr;
 
 // ---------------- helpers ----------------
-static inline float to_psi(int c, float counts) { return (counts - cfg.zero[c]) / COUNTS_PER_PSI; }
-static inline uint16_t trig_counts() { return (uint16_t)(cfg.trig_psi_x10 / 10.0f * COUNTS_PER_PSI + 0.5f); }
+static inline float to_psi(int c, float counts) { return (counts - cfg.zero[c]) / cfg.cpp[c]; }
+static inline uint16_t trig_counts(int c = 0) { return (uint16_t)(cfg.trig_psi_x10 / 10.0f * cfg.cpp[c] + 0.5f); }
 static inline float arm_psi() { return cfg.arm_psi_x10 < 0 ? -1.0f : cfg.arm_psi_x10 / 10.0f; }
 static inline uint32_t fpms() { return SPMS / n_ch; }
 static inline bool host() { return (bool)Serial; }
@@ -268,15 +269,18 @@ static void send_ring_capture(uint32_t num, bool forced) {
   Serial.flush();
 }
 
-// Prints [x0,x1,...]. With zero != nullptr, converts counts to psi.
-static void print_array(const float *v, int n, const uint16_t *zero) {
+// Prints [x0,x1,...]. With zero/cpp given, converts counts to psi.
+static void print_array(const float *v, int n, const uint16_t *zero = nullptr, const float *cpp = nullptr,
+                        int digits = 1) {
   Serial.print('[');
   for (int c = 0; c < n; c++) {
     if (c) Serial.print(',');
-    Serial.print(zero ? (v[c] - zero[c]) / COUNTS_PER_PSI : v[c], zero ? 2 : 1);
+    Serial.print(zero ? (v[c] - zero[c]) / cpp[c] : v[c], zero ? 2 : digits);
   }
   Serial.print(']');
 }
+
+static inline float hdr_psi(const CapHdr &h, int c) { return (h.pre_mean[c] - h.zero[c]) / h.cpp[c]; }
 
 static void send_entry(const CapHdr &h, const char *type) {
   Serial.print("J,{\"t\":\"");       Serial.print(type);
@@ -296,9 +300,10 @@ static void send_entry(const CapHdr &h, const char *type) {
   Serial.print(",\"uptime_ms\":");   Serial.print(h.uptime_ms);
   Serial.print(",\"zero\":[");
   for (int c = 0; c < h.n_ch; c++) { if (c) Serial.print(','); Serial.print(h.zero[c]); }
-  Serial.print("],\"pre_mean\":");   print_array(h.pre_mean, h.n_ch, nullptr);
-  Serial.print(",\"end_mean\":");    print_array(h.end_mean, h.n_ch, nullptr);
-  Serial.print(",\"p0_psi\":");      print_array(h.pre_mean, h.n_ch, h.zero);
+  Serial.print("],\"cpp\":");        print_array(h.cpp, h.n_ch, nullptr, nullptr, 3);
+  Serial.print(",\"pre_mean\":");    print_array(h.pre_mean, h.n_ch);
+  Serial.print(",\"end_mean\":");    print_array(h.end_mean, h.n_ch);
+  Serial.print(",\"p0_psi\":");      print_array(h.pre_mean, h.n_ch, h.zero, h.cpp);
   Serial.print(",\"data_bytes\":");  Serial.print(h.data_bytes);
   Serial.print(",\"data_crc\":");    Serial.print(h.data_crc);
 }
@@ -386,11 +391,10 @@ static void process_ms(const uint16_t *s, uint32_t ms_index) {
     if (cstate == CS_WAIT) {
       if (autoarm_blocked && (ap < 0 || pmax < ap * 0.5f)) autoarm_blocked = false;
       if (ap >= 0 && !autoarm_blocked && pmax >= ap) {
-        if (++above_ms >= 100) { cstate = CS_ARMED; manual_armed = false; peak_counts = 0; below_ms = 0; }
+        if (++above_ms >= 100) { cstate = CS_ARMED; manual_armed = false; peak_psi = 0; below_ms = 0; }
       } else above_ms = 0;
     } else if (cstate == CS_ARMED) {
-      float pk = pmax * COUNTS_PER_PSI;
-      if (pk > peak_counts) peak_counts = pk;
+      if (pmax > peak_psi) peak_psi = pmax;
       // auto-armed and vented slowly without a burst: go back to waiting
       if (!manual_armed && ap >= 0 && pmax < ap * 0.5f) {
         if (++below_ms >= 500) { cstate = CS_WAIT; above_ms = 0; info("vented without a trigger, disarmed"); }
@@ -401,9 +405,9 @@ static void process_ms(const uint16_t *s, uint32_t ms_index) {
   // drop trigger: always in Live, only when armed in Collect
   bool trig_on = (mode == MODE_LIVE) || (mode == MODE_COLLECT && cstate == CS_ARMED);
   if (trig_on && !pending && hist_n >= HIST_MS && ms_index >= arm_at_ms) {
-    uint16_t td = trig_counts();
     for (int c = 0; c < n_ch; c++) {
       if (c == RAIL_CH) continue;
+      uint16_t td = trig_counts(c);
       float mx = hist[c][0];
       for (int k = 1; k < HIST_MS; k++) if (hist[c][k] > mx) mx = hist[c][k];
       if (mx - mean[c] > td) {
@@ -485,7 +489,7 @@ static void handle_collect_capture() {
   cap_hdr.post_ms = POST_MS;
   cap_hdr.trig_drop = trig_counts();
   cap_hdr.uptime_ms = millis();
-  for (int c = 0; c < 4; c++) cap_hdr.zero[c] = cfg.zero[c];
+  for (int c = 0; c < 4; c++) { cap_hdr.zero[c] = cfg.zero[c]; cap_hdr.cpp[c] = cfg.cpp[c]; }
   // pre-burst level: up to 5 ms before the trigger; settled level: last 20 ms
   ring_means(0, (PRE_MS - 5) * f, cap_hdr.pre_mean);
   ring_means(frames - 20 * f, frames, cap_hdr.end_mean);
@@ -519,7 +523,7 @@ static void handle_line(char *buf) {
     case 'd': {
       int n = atoi(buf + 1);
       if (n > 0 && n < 4096) {
-        cfg.trig_psi_x10 = (uint16_t)(n / COUNTS_PER_PSI * 10.0f + 0.5f);
+        cfg.trig_psi_x10 = (uint16_t)(n / cfg.cpp[0] * 10.0f + 0.5f);
         if (cfg.trig_psi_x10 < 1) cfg.trig_psi_x10 = 1;
         settings_save(cfg);
         Serial.print("#trig_drop="); Serial.println(trig_counts());
@@ -575,7 +579,7 @@ static void handle_serial() {
 }
 
 // ---------------- menu ----------------
-enum MenuPage { MP_MAIN, MP_CAPS, MP_DEL_ONE, MP_DEL_ALL, MP_ZERO, MP_MSG };
+enum MenuPage { MP_MAIN, MP_CAPS, MP_DEL_ONE, MP_DEL_ALL, MP_ZERO, MP_CAL, MP_CAL_RESULT, MP_MSG };
 static MenuPage mpage = MP_MAIN;
 static int  msel = 0, csel = 0;
 static bool editing = false;
@@ -586,7 +590,50 @@ static uint32_t msg_until = 0;
 static bool zeroing = false;
 static uint32_t zero_t0 = 0;
 
-enum { MI_COLLECT, MI_LIVE, MI_DUMP, MI_CH, MI_TAG, MI_ARM, MI_TRIG, MI_ZERO, MI_CAPS, MI_DELALL, MI_N };
+enum { MI_COLLECT, MI_LIVE, MI_DUMP, MI_CH, MI_TAG, MI_ARM, MI_TRIG, MI_ZERO, MI_CAL, MI_CAPS, MI_DELALL, MI_N };
+
+// Calibrate: the user sets the rig to a pressure, reads the gauge, dials that value
+// in with UP/DN and records a point with SET. Hold SET to fit counts = zero + cpp*psi
+// per channel by least squares.
+#define CAL_MAX 10
+static int   cal_n = 0, cal_gauge = 0;
+static float cal_psi[CAL_MAX], cal_cnt[CAL_MAX][MAX_CH];
+static bool  cal_measuring = false;
+static uint32_t cal_t0 = 0;
+static float cal_zero[MAX_CH], cal_cpp[MAX_CH], cal_err[MAX_CH];
+static bool  cal_good = false;
+static char  cal_why[22];
+
+static void cal_fit() {
+  cal_good = true;
+  cal_why[0] = 0;
+  float lo = cal_psi[0], hi = cal_psi[0];
+  for (int i = 1; i < cal_n; i++) { if (cal_psi[i] < lo) lo = cal_psi[i]; if (cal_psi[i] > hi) hi = cal_psi[i]; }
+  if (hi - lo < 10) { cal_good = false; snprintf(cal_why, sizeof cal_why, "need >=10 psi span"); }
+  for (int c = 0; c < n_ch; c++) {
+    double sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (int i = 0; i < cal_n; i++) {
+      sx += cal_psi[i]; sy += cal_cnt[i][c]; sxx += (double)cal_psi[i] * cal_psi[i]; sxy += (double)cal_psi[i] * cal_cnt[i][c];
+    }
+    double d = cal_n * sxx - sx * sx;
+    double m = d > 0 ? (cal_n * sxy - sx * sy) / d : 0;
+    double b = (sy - m * sx) / cal_n;
+    cal_cpp[c] = (float)m;
+    cal_zero[c] = (float)b;
+    float e = 0;
+    for (int i = 0; i < cal_n; i++) {
+      float r = m > 0 ? fabsf((float)((cal_cnt[i][c] - b) / m) - cal_psi[i]) : 999.0f;
+      if (r > e) e = r;
+    }
+    cal_err[c] = e;
+    if (cal_good && (m < 0.75 * COUNTS_PER_PSI || m > 1.25 * COUNTS_PER_PSI)) {
+      cal_good = false; snprintf(cal_why, sizeof cal_why, "%c gain off >25%%", 'A' + c);
+    }
+    if (cal_good && fabs(b - 409.5) > 150) {
+      cal_good = false; snprintf(cal_why, sizeof cal_why, "%c zero off", 'A' + c);
+    }
+  }
+}
 
 static void show_msg(int ms, const char *a, const char *b = "", const char *c = "", const char *d = "") {
   const char *src[4] = {a, b, c, d};
@@ -631,6 +678,7 @@ static void menu_event(uint8_t ev) {
           case MI_LIVE:    enter_mode(MODE_LIVE); break;
           case MI_DUMP:    enter_mode(MODE_DUMP); break;
           case MI_ZERO:    mpage = MP_ZERO; zeroing = false; break;
+          case MI_CAL:     mpage = MP_CAL; cal_n = 0; cal_gauge = 0; cal_measuring = false; break;
           case MI_CAPS:    mpage = MP_CAPS; csel = 0; break;
           case MI_DELALL:  if (store_used()) mpage = MP_DEL_ALL; else show_msg(1500, "NOTHING STORED"); break;
           default:         editing = true; break;
@@ -673,6 +721,22 @@ static void menu_event(uint8_t ev) {
       if (ev & EV_SET) { zeroing = true; zero_t0 = millis(); }
       else if (ev & (EV_DN | EV_SET_LONG)) mpage = MP_MAIN;
       return;
+    case MP_CAL:
+      if (cal_measuring) return;
+      if (ev & EV_UP) cal_gauge = constrain(cal_gauge + 1, 0, 100);
+      if (ev & EV_DN) cal_gauge = constrain(cal_gauge - 1, 0, 100);
+      if ((ev & EV_SET) && cal_n < CAL_MAX) { cal_measuring = true; cal_t0 = millis(); }
+      if (ev & EV_SET_LONG) {
+        if (cal_n >= 2) { cal_fit(); mpage = MP_CAL_RESULT; }
+        else show_msg(1500, "CAL CANCELLED", "needs 2+ points");
+      }
+      return;
+    case MP_CAL_RESULT:
+      if ((ev & EV_SET) && cal_good) {
+        for (int c = 0; c < n_ch; c++) { cfg.zero[c] = (uint16_t)(cal_zero[c] + 0.5f); cfg.cpp[c] = cal_cpp[c]; }
+        show_msg(2000, settings_save(cfg) ? "CAL SAVED" : "CAL SET (no FRAM)");
+      } else if (ev & (EV_DN | EV_SET_LONG)) show_msg(1500, "CAL DISCARDED");
+      return;
     case MP_MSG:
       if (ev) msg_until = 0;
       return;
@@ -682,6 +746,14 @@ static void menu_event(uint8_t ev) {
 static void menu_tick() {
   if (mpage == MP_MSG && (int32_t)(millis() - msg_until) >= 0)
     mpage = (msel == MI_CAPS) ? MP_CAPS : MP_MAIN;
+  if (mpage == MP_CAL && cal_measuring && millis() - cal_t0 >= 600) {
+    cal_measuring = false;
+    if (disp_valid) {                            // 100 ms average, all after SET
+      cal_psi[cal_n] = (float)cal_gauge;
+      for (int c = 0; c < n_ch; c++) cal_cnt[cal_n][c] = disp_counts[c];
+      cal_n++;
+    }
+  }
   if (mpage == MP_ZERO && zeroing && millis() - zero_t0 >= 600) {
     zeroing = false;
     // disp_counts is a 100 ms average; take it after 600 ms so it is all post-SET
@@ -723,6 +795,7 @@ static void draw_menu_page(Gfx &g) {
       fmt_psi(p, cfg.trig_psi_x10 / 10.0f);
       snprintf(items[MI_TRIG], 22, "Drop trig %4s psi", p);
       snprintf(items[MI_ZERO], 22, "Zero sensors");
+      snprintf(items[MI_CAL], 22, "Calibrate (gauge)");
       if (store_ok()) snprintf(items[MI_CAPS], 22, "Captures   %2d/%d", store_used(), store_slots());
       else snprintf(items[MI_CAPS], 22, "Captures   (none)");
       snprintf(items[MI_DELALL], 22, "Delete all");
@@ -741,7 +814,7 @@ static void draw_menu_page(Gfx &g) {
       int shown = m < 23 ? m : 23;              // MenuView holds 24 rows
       for (int i = 0; i < shown; i++) {
         const CapHdr *h = store_hdr(idx[i]);
-        fmt_psi(p, (h->pre_mean[0] - h->zero[0]) / COUNTS_PER_PSI);
+        fmt_psi(p, hdr_psi(*h, 0));
         snprintf(citems[i], sizeof citems[i], "#%04lu T%-2d %5spsi%s", (unsigned long)h->id, h->tag, p, h->forced ? "F" : "");
         v.items[i + 1] = citems[i];
       }
@@ -756,7 +829,7 @@ static void draw_menu_page(Gfx &g) {
       char a[22] = "", b[22] = "";
       if (h) {
         snprintf(a, sizeof a, "DELETE #%04lu ?", (unsigned long)h->id);
-        fmt_psi(p, (h->pre_mean[0] - h->zero[0]) / COUNTS_PER_PSI);
+        fmt_psi(p, hdr_psi(*h, 0));
         snprintf(b, sizeof b, "T%d  %s psi  s%lu", h->tag, p, (unsigned long)h->session);
       }
       const char *L[] = {a, "", b, "", "", "", "SET delete", "DN cancel"};
@@ -780,6 +853,43 @@ static void draw_menu_page(Gfx &g) {
       draw_message(g, L, 8);
       break;
     }
+    case MP_CAL: {
+      char a[22], b[22], c[22] = "", d[22] = "";
+      snprintf(a, sizeof a, "CALIBRATE    pts %d", cal_n);
+      snprintf(b, sizeof b, "gauge reads %3d psi", cal_gauge);
+      int pos2 = snprintf(c, sizeof c, "now");
+      if (disp_valid)
+        for (int ch = 0; ch < n_ch; ch++) pos2 += snprintf(c + pos2, sizeof c - pos2, " %c%d", 'A' + ch, (int)(disp_counts[ch] + 0.5f));
+      if (cal_n) {
+        int pos3 = snprintf(d, sizeof d, "last %d:", (int)cal_psi[cal_n - 1]);
+        for (int ch = 0; ch < n_ch; ch++) pos3 += snprintf(d + pos3, sizeof d - pos3, " %d", (int)(cal_cnt[cal_n - 1][ch] + 0.5f));
+      }
+      const char *L[] = {a, "UP/DN: set to gauge", b, c, d, "",
+                         cal_measuring ? "measuring..." : (cal_n < CAL_MAX ? "SET record point" : "max points"),
+                         "hold SET: fit/cancel"};
+      draw_message(g, L, 8);
+      g.invert(72, 16, 24, 8);                   // highlight the gauge value
+      break;
+    }
+    case MP_CAL_RESULT: {
+      static char r[MAX_CH][32];
+      char a[22];
+      snprintf(a, sizeof a, "CAL FIT  %d points", cal_n);
+      const char *L[8] = {a, "", "", "", "", "", "", ""};
+      for (int ch = 0; ch < n_ch; ch++) {
+        char e[8]; fmt_psi(e, cal_err[ch]);
+        int g100 = (int)(cal_cpp[ch] * 100.0f + 0.5f);   // no float printf on the target
+        snprintf(r[ch], sizeof r[ch], "%c %2d.%02d/psi z%d e%s", 'A' + ch, g100 / 100, g100 % 100,
+                 (int)(cal_zero[ch] + 0.5f), e);
+        L[1 + ch] = r[ch];
+      }
+      L[4] = "(counts/psi, zero,";
+      L[5] = " worst residual psi)";
+      L[6] = cal_good ? "SET save" : cal_why;
+      L[7] = "DN discard";
+      draw_message(g, L, 8);
+      break;
+    }
     case MP_MSG: {
       const char *L[8];
       for (int i = 0; i < msg_n; i++) L[i] = msg_lines[i];
@@ -798,7 +908,7 @@ static void collect_event(uint8_t ev) {
   }
   switch (cstate) {
     case CS_WAIT:
-      if (ev & EV_SET) { cstate = CS_ARMED; manual_armed = true; peak_counts = 0; }
+      if (ev & EV_SET) { cstate = CS_ARMED; manual_armed = true; peak_psi = 0; }
       if (ev & EV_UP) force_capture();
       break;
     case CS_ARMED:
@@ -877,7 +987,7 @@ static void draw() {
       } else {
         CollectView v{};
         v.p = pv; v.state = cstate; v.arm_psi = arm_psi();
-        v.peak_psi = peak_counts / COUNTS_PER_PSI;
+        v.peak_psi = peak_psi;
         v.free_slots = store_free(); v.tag = cfg.tag;
         v.manual_armed = manual_armed; v.storage_ok = store_ok();
         draw_collect(g, v);

@@ -26,7 +26,8 @@ from burst_logger import StreamParser, Device, run_dump   # noqa: E402
 from simport import SimPort                               # noqa: E402
 
 # Menu positions (MI_* in the sketch)
-MI_COLLECT, MI_LIVE, MI_DUMP, MI_CH, MI_TAG, MI_ARM, MI_TRIG, MI_ZERO, MI_CAPS, MI_DELALL = range(10)
+MI_COLLECT, MI_LIVE, MI_DUMP, MI_CH, MI_TAG, MI_ARM, MI_TRIG, MI_ZERO, MI_CAL, MI_CAPS, MI_DELALL = range(11)
+N_ITEMS = 11
 
 
 def run(lines, *args, state=None):
@@ -54,7 +55,7 @@ def screens_lit(err):
 
 def menu_to(item, cur=0):
     """Button presses to move the main-menu cursor from `cur` to `item` (DN only)."""
-    return ["!btn DN 50"] * ((item - cur) % 10)
+    return ["!btn DN 50"] * ((item - cur) % N_ITEMS)
 
 
 ENTER_COLLECT = ["!wait 400", "!btn SET 80"]
@@ -108,7 +109,8 @@ def test_collect_auto_arm_keep_and_dump():
         cfg.update(_dir=tmp, sensors=[{"name": "A", "ch": 0}, {"name": "B", "ch": 1}],
                    groups=[{"captures": "runs/*_mylar_base/capture_*.npz", "volume_cc": 20, "bore_mm": 15.8}])
         caps = blowdown_fit.load_captures(cfg)
-        assert len(caps) == 1 and abs(caps[0]["p0g_psi"] - 30) < 0.5, caps[0]["p0g_psi"]
+        # nominal gain in the config; sim sensor B reads 3% low, so the mean is ~29.6
+        assert len(caps) == 1 and abs(caps[0]["p0g_psi"] - 30) < 1.0, caps[0]["p0g_psi"]
         y = caps[0]["y"]
         t = caps[0]["t"]
         assert abs(y[:, t < -0.005].mean() - 1) < 0.01 and abs(y[:, t > 0.05].mean()) < 0.01
@@ -167,8 +169,29 @@ def test_zero_and_tag_persist_across_reboot():
         assert [e["id"] for e in entries] == [1, 2], entries
         for e in entries:
             assert e["tag"] == 3 and e["zero"] == [410, 406], e
-        assert abs(entries[1]["p0_psi"][0] - 45) < 0.2 and abs(entries[1]["p0_psi"][1] - 45) < 0.2
+        assert abs(entries[1]["p0_psi"][0] - 45) < 0.2            # B has a 3% gain error until calibrated
+        assert 42.9 < entries[1]["p0_psi"][1] < 43.9, entries[1]["p0_psi"]
         assert entries[1]["session"] == entries[0]["session"] + 1
+
+
+def test_calibrate():
+    with tempfile.TemporaryDirectory() as tmp:
+        st = os.path.join(tmp, "state.bin")
+        def point(psi, prev):
+            return [f"!p {psi} 300", "!wait 800"] + ["!btn UP 40"] * (psi - prev) + ["!btn SET 80", "!wait 900"]
+        # sim sensors: A gain 1.00, B 0.97 (counts per psi 32.76 / 31.78), zeros 410 / 406
+        lines = ["!wait 400"] + menu_to(MI_CAL) + ["!btn SET 80"]
+        lines += point(0, 0) + point(20, 0) + point(40, 20) + point(60, 40)
+        lines += ["!btn SET 1000", "!wait 200", "!screen " + os.path.join(tmp, "cal.pbm"), "!btn SET 80", "!wait 2500",
+                  "!p 0 300", "!wait 600"]
+        lines += ["!btn UP 50"] * (MI_CAL - MI_COLLECT) + ["!btn SET 80"] + burst_cycle(45) + TO_MENU + ["!wait 300", "L"]
+        items, err = run(lines, state=st)
+        e = [i[1] for i in items if i[0] == "json" and i[1].get("t") == "entry"]
+        assert len(e) == 1, items[-5:]
+        e = e[0]
+        assert abs(e["cpp"][0] - 32.76) < 0.1 and abs(e["cpp"][1] - 31.78) < 0.1, e["cpp"]
+        assert abs(e["zero"][0] - 410) <= 1 and abs(e["zero"][1] - 406) <= 1, e["zero"]
+        assert all(abs(p - 45) < 0.2 for p in e["p0_psi"]), e["p0_psi"]
 
 
 def test_storage_full():

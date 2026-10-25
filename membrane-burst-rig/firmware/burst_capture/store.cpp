@@ -161,7 +161,7 @@ int store_save(CapHdr &h, uint32_t n, uint16_t (*sample)(uint32_t)) {
   }
 
   h.magic = CAP_MAGIC;
-  h.version = 1;
+  h.version = 2;
   h.hdr_bytes = sizeof(CapHdr);
   h.packing = 1;
   h.data_bytes = data_bytes;
@@ -202,7 +202,7 @@ bool store_check_crc(int s) {
 #define FRAM_ADDR     0x50
 #define FRAM_WP_PIN   15
 #define SETTINGS_AT   0x1F00          // near the top of the 8 KB part, clear of DMX config
-#define SETTINGS_MAGIC 0x31464342u    // "BCF1"
+#define SETTINGS_MAGIC 0x32464342u    // "BCF2"
 
 static bool fram_ok = false;
 
@@ -234,7 +234,10 @@ void settings_defaults(Settings &s) {
   s.tag = 1;
   s.arm_psi_x10 = 50;
   s.trig_psi_x10 = 10;
-  for (int c = 0; c < 4; c++) s.zero[c] = 410;   // 0.1 x 4095: 0.5 V of a 5 V-scale sensor
+  for (int c = 0; c < 4; c++) {
+    s.zero[c] = 410;          // 0.1 x 4095: 0.5 V of a 5 V-scale sensor
+    s.cpp[c] = 32.76f;        // 0.8 x 4095 counts over 100 psi
+  }
   s.next_id = 1;
   s.session = 0;
 }
@@ -248,6 +251,7 @@ bool settings_load(Settings &s) {
   if (!fram_ok) return false;
   if (t.magic != SETTINGS_MAGIC || t.crc != crc32_update(0, (uint8_t *)&t, offsetof(Settings, crc))) return false;
   if (t.n_ch < 1 || t.n_ch > 3) t.n_ch = 2;
+  for (int c = 0; c < 4; c++) if (!(t.cpp[c] > 20.0f && t.cpp[c] < 50.0f)) t.cpp[c] = 32.76f;
   s = t;
   return true;
 }

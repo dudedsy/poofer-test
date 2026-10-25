@@ -66,6 +66,7 @@ The sensors land on the J3 stack socket. Each ADC line already has a 4.7 kOhm se
 
 - **Filter cap:** fit 1 nF C0G 0805 in the DNP shunt footprints on the module side of the series resistor: C17 for ADC0, C16 for ADC1, C15 for ADC2. With the 4.7 kOhm that is a ~34 kHz corner (about 5 us of lag) and it gives the ADC's sample-and-hold a charge reservoir when it switches channels. Don't use the 10 nF the base board spec suggests for those footprints: that is ~50 us of lag on top of the sensor. (Moderate confidence on the RP2040 sampling-charge argument; the bring-up crosstalk check below tests it.)
 - **Power:** the UI board's OLED and LEDs run from the base board's +5V, which only exists with 24 V on J4. On USB power alone the firmware runs and dump mode works, but the display stays dark. Standalone collection needs 24 V.
+- **Reference:** the RP2040-Zero feeds its ADC reference from 3V3 through 200 Ohm (R6) with 2.2 uF (C11). The ADC's ~150 uA leaves the reference roughly 30 mV below the 3V3 that powers the sensor (per the Pico datasheet, varies chip to chip), so readings run ~1% high. The fit normalizes each capture, so tau is unaffected; the Calibrate menu step absorbs it for the psi display and burst pressure.
 - **Crosstalk check at bring-up:** with 2 channels, leave sensor B vented and pressurize A to ~50 psi. B's reading should not move by more than a count or two. If it follows A, fit the C16/C17 caps (or larger) and recheck.
 
 ### On a bare RP2040-Zero
@@ -135,7 +136,8 @@ Menu settings (stored in the base board FRAM, so they survive power cycles):
 | Tag | 0 to 15, stored with each capture. Use one tag per rig configuration (membrane, volume) so the dump sorts captures into separate run folders |
 | Auto arm | off, or 1 to 90 psi (default 5) |
 | Drop trig | 0.5 to 10 psi (default 1.0) |
-| Zero sensors | vent the rig, SET: averages 0.5 s and stores each channel's zero counts for the psi display. Refused if a reading is more than ~3.7 psi from the nominal 410 counts |
+| Zero sensors | vent the rig, SET: averages 0.5 s and stores each channel's zero counts for the psi display. Refused if a reading is more than ~3.7 psi from the nominal 410 counts. Keeps the calibrated gain |
+| Calibrate (gauge) | static calibration against a gauge. Set the rig to a pressure, dial the gauge reading in with UP/DN, SET records a point (2 to 10 points, at least 10 psi apart overall). Hold SET to fit counts = zero + gain x psi per channel; the result screen shows gain (counts/psi), zero and worst residual, SET saves, DN discards. Refused if a gain is more than 25% off nominal (32.76) or a zero is far from 410 |
 | Captures | list of stored captures (newest first: id, tag, pre-burst psi, F = forced). SET on one asks to delete it |
 | Delete all | asks for confirmation; needs a **long** SET press |
 
@@ -195,7 +197,7 @@ python host/burst_logger.py COM5 --dump --tags 1=mylar_base --erase
 ```
 
 - One folder per tag, `runs/<time>_<tag label>/capture_<id>.npz/.json`, so the analysis globs work unchanged. Tags without a label become `tag<N>`.
-- Each capture's json carries the board's id, session, tag, zeros, pre-burst psi, ADC error count and `crc_ok`.
+- Each capture's json carries the board's id, session, tag, zeros, gains (`cpp`, counts per psi), pre-burst psi, ADC error count and `crc_ok`.
 - Captures already copied (same id and CRC under `--outdir`) are skipped, so dumping twice is harmless.
 - `--erase` deletes each capture from the board only after its copy is written and its CRC, framing and length check out. Without it, nothing is deleted; use the menu to clear the board.
 

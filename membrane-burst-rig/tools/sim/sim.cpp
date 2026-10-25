@@ -147,6 +147,7 @@ void irq_set_enabled(int, bool) {}
 static const double CPP = 0.8 * 4095.0 / 100.0;
 static double zero_counts[3] = {410, 406, 413};
 static double tau_s[3] = {0.5e-3, 1.5e-3, 4.0e-3};      // sensor lags
+static double gain[3] = {1.0, 0.97, 1.03};               // sensor gain errors (calibration tests)
 static double p_from = 0, p_to = 0;                       // psig
 static uint64_t ramp_t0 = 0, ramp_us = 1;
 static bool bursting = false;
@@ -176,7 +177,7 @@ static void produce_block() {
     double p = rig_psi((uint64_t)t_us);
     double dt = nch / 300000.0;
     sens[c] += (p - sens[c]) * (1.0 - exp(-dt / tau_s[c]));
-    double v = zero_counts[c] + sens[c] * CPP + noise(rng);
+    double v = zero_counts[c] + sens[c] * CPP * gain[c] + noise(rng);
     int counts = (int)lround(v);
     if (counts < 0) counts = 0;
     if (counts > 4095) counts = 4095;

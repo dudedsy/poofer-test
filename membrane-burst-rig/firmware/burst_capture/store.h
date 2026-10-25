@@ -20,7 +20,7 @@
 
 struct CapHdr {
   uint32_t magic;
-  uint16_t version;          // 1
+  uint16_t version;          // 2 (added cpp)
   uint16_t hdr_bytes;
   uint32_t id;               // capture number, unique and increasing
   uint32_t session;          // collect-mode session number
@@ -36,7 +36,8 @@ struct CapHdr {
   uint16_t trig_drop;        // counts
   uint16_t err_samples;
   uint32_t uptime_ms;
-  uint16_t zero[4];          // per-channel vented counts used for the psi display
+  uint16_t zero[4];          // per-channel vented counts (calibration offset)
+  float    cpp[4];           // per-channel counts per psi (calibration gain)
   float    pre_mean[4];      // counts
   float    end_mean[4];      // counts
   uint32_t data_bytes;
@@ -72,12 +73,13 @@ bool     store_check_crc(int slot);
 
 // ---- settings in FRAM ----
 struct Settings {
-  uint32_t magic;            // 'BCF1'
+  uint32_t magic;            // 'BCF2'
   uint8_t  n_ch;             // 1..3
   uint8_t  tag;              // 0..15
   int16_t  arm_psi_x10;      // < 0 = auto-arm off
   uint16_t trig_psi_x10;     // drop trigger
   uint16_t zero[4];          // vented counts per channel
+  float    cpp[4];           // counts per psi per channel (nominal 32.76)
   uint32_t next_id;
   uint32_t session;
   uint32_t crc;
