@@ -32,7 +32,7 @@ DELAY = [0.0, 0.05e-3, -0.03e-3]
 CD = 0.72
 BORE = 12.0e-3
 FS = 100000.0
-PRE_MS, POST_MS = 50, 200
+PRE_MS, POST_MS = 20, 80          # matches the firmware capture window
 RANGE, LO, HI, FULL = 100.0, 0.1, 0.9, 4095
 
 
@@ -128,7 +128,7 @@ def main():
                sensor=dict(range_psi=RANGE, out_lo_frac=LO, out_hi_frac=HI, adc_full=FULL),
                sensors=[dict(name=n, ch=k, zero=zeros[k]) for k, n in enumerate("ABC")],
                ref_sensor="A", groups=groups,
-               fit=dict(pre_ms=[-40, -5], end_ms=[150, 195], window_ms=[-3, 30]),
+               fit=dict(pre_ms=[-18, -5], end_ms=[50, 78], window_ms=[-3, 30]),
                truth=dict(tau_ms=[x * 1e3 for x in TAU], delay_ms=[x * 1e3 for x in DELAY], Cd=CD,
                           mismatch=a.mismatch))
     with open(os.path.join(a.outdir, "rig_config.json"), "w") as f:

@@ -119,8 +119,8 @@ def load_captures(cfg):
     lo, hi = sc.get("out_lo_frac", 0.1), sc.get("out_hi_frac", 0.9)
     full = sc.get("adc_full", 4095)
     fitc = cfg.get("fit", {})
-    pre_ms = fitc.get("pre_ms", [-40, -5])
-    end_ms = fitc.get("end_ms", [150, 195])
+    pre_ms = fitc.get("pre_ms", [-18, -5])
+    end_ms = fitc.get("end_ms", [50, 78])
     rail_mode = cfg.get("supply_mode", "fixed") == "rail"
     rail_ch = cfg.get("rail_ch")
     sensors = cfg["sensors"]
@@ -154,6 +154,9 @@ def load_captures(cfg):
             sig = np.array(sig)
             pre = (t >= pre_ms[0] / 1e3) & (t < pre_ms[1] / 1e3)
             end = (t >= end_ms[0] / 1e3) & (t < end_ms[1] / 1e3)
+            if pre.sum() < 10 or end.sum() < 10:
+                sys.exit(f"{fn}: capture spans {t[0]*1e3:.0f} to {t[-1]*1e3:.0f} ms, but fit.pre_ms={pre_ms} / "
+                         f"fit.end_ms={end_ms} select {pre.sum()} / {end.sum()} samples. Adjust them in the config.")
             c_pre, c_end = sig[:, pre].mean(1), sig[:, end].mean(1)
             sens = (hi - lo) / rng * (1.0 if rail_mode else full)   # per psi
             p0g_each = (c_pre - c_end) / sens
@@ -176,7 +179,10 @@ def initial_tb(cap, ref):
     y = cap["y"][ref]
     w = max(1, int(cap["fs"] / 5000))
     ys = np.convolve(y, np.ones(w) / w, mode="same")
-    idx = np.where((cap["t"] > -0.02) & (ys < 0.97))[0]
+    # skip the smoothing's edge (mode="same" pads with zeros) and the pre-trigger
+    # stretch that a short capture starts with
+    t = cap["t"]
+    idx = np.where((t > max(-0.02, t[min(len(t) - 1, 2 * w)])) & (ys < 0.97))[0]
     return cap["t"][idx[0]] - 0.0005 if len(idx) else 0.0
 
 

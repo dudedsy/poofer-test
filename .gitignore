@@ -5,3 +5,4 @@ rig_config.json
 __pycache__/
 *.pyc
 build/
+membrane-burst-rig/tools/sim/burst_sim

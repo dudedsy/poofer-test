@@ -1,5 +1,5 @@
 {
-  "_comment": "Copy to rig_config.json next to your runs/ folder and fill in measured values. Paths are relative to this file.",
+  "_comment": "Copy to rig_config.json next to your runs/ folder and fill in measured values. Paths are relative to this file. fit windows are ms from the trigger; captures span -20 to +80 ms (firmware 3.0; older live captures span -50 to +200).",
   "gas": "air",
   "T0_K": 293.15,
   "p_amb_kPa": 101.3,
@@ -16,5 +16,5 @@
     {"captures": "runs/*_mylar_base/capture_*.npz",   "volume_cc": 20.0, "bore_mm": 15.8, "membrane": "mylar"},
     {"captures": "runs/*_mylar_capped/capture_*.npz", "volume_cc": 45.0, "bore_mm": 15.8, "membrane": "mylar"}
   ],
-  "fit": {"pre_ms": [-40, -5], "end_ms": [150, 195], "window_ms": [-3, 30]}
+  "fit": {"pre_ms": [-18, -5], "end_ms": [50, 78], "window_ms": [-3, 30]}
 }
