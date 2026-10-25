@@ -5,3 +5,4 @@ Test rigs and tools for the Brain Freeze propane poofer project (DMX-controlled 
 | Folder | What |
 |---|---|
 | [`membrane-burst-rig/`](membrane-burst-rig/) | Membrane burst rig for measuring pressure-sensor response time: RP2040 capture firmware, laptop logger, and the blowdown/sensor-lag fit. |
+| [`board-test/`](board-test/) | Bring-up test firmware for the DMX base board, UI lid board, solenoid driver and igniter boards: graded serial report plus single-test commands. |
