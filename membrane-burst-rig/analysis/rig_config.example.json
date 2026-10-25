@@ -1,0 +1,20 @@
+{
+  "_comment": "Copy to rig_config.json next to your runs/ folder and fill in measured values. Paths are relative to this file.",
+  "gas": "air",
+  "T0_K": 293.15,
+  "p_amb_kPa": 101.3,
+  "supply_mode": "fixed",
+  "rail_ch": null,
+  "sensor": {"range_psi": 100, "out_lo_frac": 0.1, "out_hi_frac": 0.9, "adc_full": 4095},
+  "sensors": [
+    {"name": "A", "ch": 0, "zero": 410},
+    {"name": "B", "ch": 1, "zero": 409},
+    {"name": "C", "ch": 2, "zero": 412}
+  ],
+  "ref_sensor": "A",
+  "groups": [
+    {"captures": "runs/*_mylar_base/capture_*.npz",   "volume_cc": 20.0, "bore_mm": 15.8, "membrane": "mylar"},
+    {"captures": "runs/*_mylar_capped/capture_*.npz", "volume_cc": 45.0, "bore_mm": 15.8, "membrane": "mylar"}
+  ],
+  "fit": {"pre_ms": [-40, -5], "end_ms": [150, 195], "window_ms": [-3, 30]}
+}

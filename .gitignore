@@ -1,0 +1,7 @@
+runs/
+plots/
+fit_results.json
+rig_config.json
+__pycache__/
+*.pyc
+build/
