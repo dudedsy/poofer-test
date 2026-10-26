@@ -7,7 +7,12 @@
   on USB power alone or with 24 V. On USB alone the +5V rail (U1 buck) is dead
   by design (D2 blocks the module's VBUS from back-feeding it), so UI LEDs,
   OLED VBAT and U3 are unpowered: those checks run electrically but the visual
-  parts are skipped. DMX receive is not tested in this version.
+  parts are skipped, and DMX receive is skipped.
+
+  DMX receive uses the RP2040's UART0 RX on GP1 (U3 RO) at 250 kbaud 8N2, with
+  break detection, not the PIO receiver planned for production firmware. It
+  proves the hardware path: J1, D3, U3 and its isoPower supply (L1, L2), R40.
+  Source: board-test/host/artnet_send.py on the Pi, via the CR011R node.
 
   Toolchain : Arduino IDE / arduino-cli, Earle Philhower "Raspberry Pi Pico/RP2040" core
               (Tools > Board: "Waveshare RP2040 Zero")
@@ -33,6 +38,8 @@
    11  ADC0-3 readings
    12  SPARE1 pull population
    13  CH1-CH6: pulldowns, pin-to-pin isolation, slow walk
+   13a DMX receive, 2 s listen on J1 (24 V only). No source = INFO, not a fault.
+       Pattern frames from artnet_send.py are checked slot by slot.
    14  igniter board, if detected at 0x48-0x4F: chip IDs, cold junction, thermocouple
        (output not toggled; the CH walk covers it)
    15  solenoid board, if an ADC line is held low by ADC_SENSE (needs the JP2 shunt):
@@ -50,7 +57,12 @@
 #include <initializer_list>
 #include "hardware/gpio.h"
 #include "hardware/watchdog.h"
+#include "hardware/uart.h"
+#include "hardware/irq.h"
+#include "hardware/sync.h"
+#include "hardware/timer.h"
 #include "pico/unique_id.h"
+#include "dmx_rx.h"
 
 // ---------------------------------------------------------------- config
 // WS2812 colour order. The "RED" step of the colour cycle should look red.
@@ -102,7 +114,7 @@ enum Grp : uint8_t { G_BASE, G_UI, G_OLED, G_STACK, G_N };
 static const char* ST_TXT[] = {"PASS", "WARN", "FAIL", "INFO", "SKIP"};
 static const char* GRP_TXT[] = {"base", "ui", "oled", "stack"};
 struct Result { Grp g; St st; char name[24]; char detail[200]; };
-static Result R[72];
+static Result R[96];
 static int nR = 0;
 
 static void rec(Grp g, St st, const char* name, const char* fmt, ...) {
@@ -230,12 +242,18 @@ static void testDmxRail() {
   else rec(G_BASE, FAIL, "DMX DE pulldown", "DE floats high: R37 missing/open (check R37 pads and U3 pins 5/6)");
 
   // DI and RO: R38/R39 to +3V3_DMX (plus U3 RxD on RO) must beat the internal pulldown.
+  // RO is sampled for 20 ms rather than once: with a live DMX source on J1 it toggles,
+  // and a single read can land on a data bit.
   pinMode(PIN_DMX_DI, INPUT_PULLDOWN); pinMode(PIN_DMX_RO, INPUT_PULLDOWN); delay(2);
-  int di = digitalRead(PIN_DMX_DI), ro = digitalRead(PIN_DMX_RO);
+  int di = digitalRead(PIN_DMX_DI);
+  uint32_t roHi = 0, roLo = 0, t0 = micros();
+  while (micros() - t0 < 20000) { if (gpio_get(PIN_DMX_RO)) roHi++; else roLo++; }
+  int ro = roHi > 0;
   pinMode(PIN_DMX_DI, INPUT); pinMode(PIN_DMX_RO, INPUT);
 
   g_5v = di;
-  if (di && ro) rec(G_BASE, PASS, "+3V3_DMX / +5V", "present (R38/R39 pull GP0/GP1 high), so 24 V in, U1 buck and U5 are alive");
+  if (di && ro) rec(G_BASE, PASS, "+3V3_DMX / +5V", "present (R38/R39 pull GP0/GP1 high), so 24 V in, U1 buck and U5 are alive%s",
+                    roLo ? ". RO toggling: DMX activity on J1" : "");
   else if (di && !ro) rec(G_BASE, WARN, "+3V3_DMX / +5V", "rail present but RO low at idle: line held at space (A/B reversed on a live driver?) or U3 bus side not running. Measure VISOOUT TP vs DMX_ISO_GND (~3.3 V)");
   else if (!di && !ro) rec(G_BASE, WARN, "+3V3_DMX / +5V", "absent: treating as USB-only power (UI LEDs, OLED VBAT dark). If 24 V IS connected this is a FAIL: check +5V TP / U1 pin 3, then +3V3_DMX TP / U5 pin 4");
   else rec(G_BASE, FAIL, "+3V3_DMX / +5V", "RO high but DI low: R38 open, or R48 open (GP0 side)");
@@ -792,6 +810,180 @@ static void chPwmHold() {
   Serial.println("  stopped, all low");
 }
 
+// ---------------------------------------------------------------- 13a / 'd' / 'e' DMX receive
+// UART0 RX on GP1 (U3 RO via R40). GP0 (DI) stays a plain input and DE stays low, so
+// this board never drives the bus. The IRQ drains the RX FIFO into dmx_feed() (dmx_rx.h).
+static DmxRx g_dmx;
+static bool g_dmxIrqSet = false;
+static uint32_t g_dmxBaud = 0;
+
+static void __not_in_flash_func(dmxIrq)() {
+  uart_hw_t* u = uart_get_hw(uart0);
+  uint32_t now = time_us_32();
+  while (!(u->fr & UART_UARTFR_RXFE_BITS)) dmx_feed(&g_dmx, u->dr, now);
+}
+
+static void dmxStart() {
+  irq_set_enabled(UART0_IRQ, false);
+  dmx_reset(&g_dmx);
+  g_dmxBaud = uart_init(uart0, 250000);
+  uart_set_format(uart0, 8, 2, UART_PARITY_NONE);
+  uart_set_hw_flow(uart0, false, false);
+  uart_set_fifo_enabled(uart0, true);
+  gpio_set_function(PIN_DMX_RO, GPIO_FUNC_UART);
+  gpio_disable_pulls(PIN_DMX_RO);
+  while (!(uart_get_hw(uart0)->fr & UART_UARTFR_RXFE_BITS)) (void)uart_get_hw(uart0)->dr;
+  if (!g_dmxIrqSet) { irq_set_exclusive_handler(UART0_IRQ, dmxIrq); g_dmxIrqSet = true; }
+  // RX interrupt at >= 4 entries (1/8 full) plus RX timeout (32 bit times idle with data waiting)
+  hw_write_masked(&uart_get_hw(uart0)->ifls, 0u << UART_UARTIFLS_RXIFLSEL_LSB, UART_UARTIFLS_RXIFLSEL_BITS);
+  uart_get_hw(uart0)->imsc = UART_UARTIMSC_RXIM_BITS | UART_UARTIMSC_RTIM_BITS;
+  irq_set_enabled(UART0_IRQ, true);
+}
+static void dmxStop() {
+  irq_set_enabled(UART0_IRQ, false);
+  uart_get_hw(uart0)->imsc = 0;
+  uart_deinit(uart0);
+  pinMode(PIN_DMX_RO, INPUT);   // back to SIO for the rail check
+}
+static void dmxSnap(DmxStats* s, uint32_t* sinceBreakUs, bool* everBreak) {
+  uint32_t m = save_and_disable_interrupts();
+  *s = g_dmx.st;
+  *everBreak = g_dmx.haveBreak;
+  *sinceBreakUs = time_us_32() - g_dmx.lastBreakUs;
+  restore_interrupts(m);
+}
+static uint16_t dmxSnapFrame(uint8_t* out, uint16_t maxSlots, uint16_t* fullN) {   // out[0] = start code
+  uint32_t m = save_and_disable_interrupts();
+  uint16_t all = g_dmx.lastN, n = all > maxSlots ? maxSlots : all;
+  memcpy(out, g_dmx.last, n + 1);
+  restore_interrupts(m);
+  if (fullN) *fullN = all;
+  return n;
+}
+
+static void dmxGrade(const DmxStats& s, uint32_t ms, bool fromMenu) {
+  float sec = ms / 1000.0f;
+  if (s.bytes == 0) {
+    if (fromMenu) rec(G_BASE, FAIL, "DMX receive", "nothing on RO in %.1f s. Sender running and node in 'Artnet -> dmx'? XLR harness on J1? "
+                      "Then VISOOUT TP to DMX_ISO_GND (~3.3 V; 0 V = L1 open or U3 converter dead), +3V3_DMX TP, scope DMX_RO TP", sec);
+    else rec(G_BASE, INFO, "DMX receive", "no DMX on J1 in %.1f s (no source connected; fine for bring-up). 'd' tests it with artnet_send.py running", sec);
+    return;
+  }
+  if (s.frames == 0) {
+    rec(G_BASE, FAIL, "DMX receive", "%lu bytes, %lu breaks, %lu framing errors, no clean frame%s. A/B reversed in the harness or node (data+ = XLR 3 = J1.1/J1.6), "
+        "wrong source baud, or a very noisy line",
+        (unsigned long)s.bytes, (unsigned long)s.breaks, (unsigned long)s.fe,
+        s.altSc ? " with start code 0x00 (only alternate start codes seen)" : "");
+    return;
+  }
+  float hz = s.perN ? 1e6f * s.perN / (float)s.perSumUs : 0;
+  rec(G_BASE, PASS, "DMX receive", "%lu frames in %.1f s (%.1f Hz), %u-%u slots, start code 0x00 (UART at %lu baud)",
+      (unsigned long)s.frames, sec, hz, s.slotsMin, s.slotsMax, (unsigned long)g_dmxBaud);
+  if (s.perN) rec(G_BASE, INFO, "DMX timing", "break to break min %.2f / avg %.2f / max %.2f ms. DMX512 allows up to 1 s; a full 512-slot frame takes ~22.7 ms",
+                  s.perMinUs / 1000.0f, s.perSumUs / 1000.0f / s.perN, s.perMaxUs / 1000.0f);
+
+  uint32_t lineErr = s.fe + s.oe + s.pe;
+  if (!lineErr && !s.errFrames) rec(G_BASE, PASS, "DMX line errors", "none in %lu bytes", (unsigned long)s.bytes);
+  else {
+    St st = (s.errFrames * 100 <= s.frames) ? WARN : FAIL;
+    rec(G_BASE, st, "DMX line errors", "%lu framing, %lu overrun, %lu parity in %lu bytes; %lu of %lu frames dropped. Framing: noise, missing termination "
+        "(JP1 on the last unit), reflections. Overrun: firmware fell behind the FIFO (firmware bug, not hardware)",
+        (unsigned long)s.fe, (unsigned long)s.oe, (unsigned long)s.pe, (unsigned long)s.bytes,
+        (unsigned long)s.errFrames, (unsigned long)(s.errFrames + s.frames));
+  }
+  if (s.altSc) rec(G_BASE, INFO, "DMX alt start", "%lu frames with start code 0x%02X (0xCC RDM, 0x17 text, 0xCF SIP): ignored, not an error",
+                   (unsigned long)s.altSc, s.lastAltSc);
+
+  uint32_t np = s.patOk + s.patPad + s.patTear + s.patBad;
+  if (!np) rec(G_BASE, INFO, "DMX pattern", "none of the %lu frames carry the test pattern (QLC+, set/ramp mode, or blackout): data not checked", (unsigned long)s.frames);
+  else if (!s.patBad) rec(G_BASE, PASS, "DMX pattern", "%lu frames checked slot by slot, all correct%s", (unsigned long)np,
+                          s.patTear ? ", some torn (see below)" : "");
+  else rec(G_BASE, FAIL, "DMX pattern", "%lu of %lu pattern frames corrupt. First: slot %u got 0x%02X, expected 0x%02X (seq 0x%02X). Random bits = noise/termination; "
+           "every slot after one point wrong = dropped or extra byte",
+           (unsigned long)s.patBad, (unsigned long)np, s.firstBad.firstBad, s.firstBad.got, s.firstBad.exp, s.firstBad.seq);
+  if (s.patPad) rec(G_BASE, INFO, "DMX padded frames", "%lu frames: pattern, then zeros to the end (sender -n shorter than the node's output; the node pads). Checked up to the padding",
+                    (unsigned long)s.patPad);
+  if (s.patTear) rec(G_BASE, INFO, "DMX torn frames", "%lu frames mix two consecutive packets (the node updates its buffer mid-frame). Harmless for the poofers; "
+                     "if it is the same end slot every time, suspect a fault on that slot instead", (unsigned long)s.patTear);
+  if (np && s.patNone) rec(G_BASE, INFO, "DMX other frames", "%lu frames not the pattern (blackout from the sender exiting, or a second Art-Net source such as QLC+)",
+                           (unsigned long)s.patNone);
+  if (np) {
+    if (s.seqChanges) rec(G_BASE, INFO, "DMX updates", "pattern changed %lu times in %.1f s: ~%.0f packets/s reach the bus (sender default 30/s)",
+                          (unsigned long)s.seqChanges, sec, s.seqChanges / sec);
+    else rec(G_BASE, WARN, "DMX updates", "pattern never changed: the node is repeating one frame. Sender stopped? (If you stopped it on purpose, the node holds last data on Art-Net loss)");
+  }
+  if (s.losses) rec(G_BASE, WARN, "DMX gaps", "%lu gaps over 1 s between frames (max %.0f ms): a poofer board would have timed out",
+                    (unsigned long)s.losses, s.perMaxUs / 1000.0f);
+}
+
+static void testDmx(bool fromMenu) {
+  hdr("DMX receive (J1 -> D3 -> U3 -> R40 -> GP1)");
+  if (!g_5v) { rec(G_BASE, SKIP, "DMX receive", "+5V absent (USB only?): U3 and U5 unpowered. Connect 24 V"); return; }
+  const uint32_t ms = fromMenu ? 5000 : 2000;
+  Serial.printf("  Listening %lu s%s...\n", (unsigned long)(ms / 1000), fromMenu ? " (any key aborts)" : "");
+  dmxStart();
+  uint32_t t0 = millis();
+  bool aborted = false;
+  while (millis() - t0 < ms) { if (fromMenu && keyHit()) { aborted = true; break; } delay(10); }
+  uint32_t el = millis() - t0;
+  DmxStats s; uint32_t since; bool everBreak;
+  dmxSnap(&s, &since, &everBreak);
+  uint8_t f[13]; uint16_t n = dmxSnapFrame(f, 12, nullptr);
+  dmxStop();
+  if (aborted) { rec(G_BASE, SKIP, "DMX receive", "aborted after %.1f s", el / 1000.0f); return; }
+  if (n) {
+    Serial.print("  Last frame, slots 1-12:");
+    for (int i = 1; i <= n; i++) Serial.printf(" %u", f[i]);
+    Serial.println();
+  }
+  dmxGrade(s, el, fromMenu);
+}
+
+static void dmxMonitor() {
+  hdr("DMX monitor (any key stops). Counts are per 0.5 s line");
+  if (!g_5v) Serial.println("  WARNING: +5V looked absent at the last check ('p' rechecks). U3 needs 24 V in.");
+  Serial.println("  Hz    = frames per second       sl = slots in last frame");
+  Serial.println("  ok/tr/BAD/oth = pattern frames: correct / torn / corrupt / not the pattern");
+  Serial.println("  err   = frames dropped for line errors   seq = pattern sequence byte");
+  dmxStart();
+  DmxStats a; uint32_t since; bool eb;
+  dmxSnap(&a, &since, &eb);
+  uint32_t tPrev = millis();
+  bool lostShown = false;
+  while (!keyHit()) {
+    delay(20);
+    if (millis() - tPrev < 500) continue;
+    DmxStats b; dmxSnap(&b, &since, &eb);
+    float dt = (millis() - tPrev) / 1000.0f; tPrev = millis();
+    uint32_t fr = b.frames - a.frames, ef = b.errFrames - a.errFrames;
+    uint32_t ok = (b.patOk + b.patPad) - (a.patOk + a.patPad), tr = b.patTear - a.patTear, bad = b.patBad - a.patBad, oth = b.patNone - a.patNone;
+    uint8_t f[13]; uint16_t all = 0; uint16_t n = dmxSnapFrame(f, 12, &all);
+    if (!eb || since > DMX_LOSS_US) {
+      if (!eb) Serial.println("  NO DMX seen yet");
+      else Serial.printf("  NO DMX for %.1f s (a poofer board would time out)\n", since / 1e6f);
+      ledRGB(60, 0, 0);
+      lostShown = true;
+    } else {
+      if (lostShown) { Serial.println("  DMX back"); lostShown = false; }
+      Serial.printf("  %5.1f Hz %3u sl  ok %3lu tr %2lu BAD %2lu oth %3lu  err %2lu  seq %02X |",
+                    fr / dt, all, (unsigned long)ok, (unsigned long)tr, (unsigned long)bad, (unsigned long)oth,
+                    (unsigned long)ef, b.lastSeq);
+      for (int i = 1; i <= n; i++) Serial.printf(" %3u", f[i]);
+      Serial.println();
+      if (bad || ef) ledRGB(40, 25, 0); else if (fr) ledRGB(0, 50, 0); else ledRGB(0, 0, 40);
+    }
+    a = b;
+  }
+  dmxStop();
+  DmxStats s; dmxSnap(&s, &since, &eb);
+  Serial.printf("  Totals: %lu frames, %lu dropped for line errors (FE %lu OE %lu), pattern ok %lu torn %lu BAD %lu other %lu, gaps > 1 s: %lu\n",
+                (unsigned long)s.frames, (unsigned long)s.errFrames, (unsigned long)s.fe, (unsigned long)s.oe,
+                (unsigned long)(s.patOk + s.patPad), (unsigned long)s.patTear, (unsigned long)s.patBad, (unsigned long)s.patNone, (unsigned long)s.losses);
+  if (s.haveBad) Serial.printf("  First corrupt frame: slot %u got 0x%02X, expected 0x%02X (seq 0x%02X)\n",
+                               s.firstBad.firstBad, s.firstBad.got, s.firstBad.exp, s.firstBad.seq);
+  showStatus();
+}
+
 // ---------------------------------------------------------------- 'i' raw FRAM-address diagnostic
 // Tries every FRAM address two independent ways: the core's bit-banged address-only
 // probe (what the scan uses) and a real hardware-I2C transaction (set address
@@ -1188,6 +1380,7 @@ static void printMenu() {
     "  p  +5V rail / DE pulldown      i  I2C diagnostic (FRAM addrs)\n"
     "  t  slow SDA/SCL toggle         v  solenoid board test\n"
     "  g  igniter board test          m  thermocouple monitor\n"
+    "  d  DMX receive test (5 s)      e  DMX live monitor\n"
     "  h  this menu");
 }
 
@@ -1213,6 +1406,7 @@ static void runAll() {
   testAdc();
   testSpare();
   testChannels(true);
+  testDmx(false);
 
   // Daughterboards, non-interactive, only if detected
   igFind();
@@ -1270,6 +1464,8 @@ void loop() {
     case 'g': clearResults(); testIgniter(true); break;
     case 'm': tcMonitor(); return;
     case 'c': clearResults(); testChannels(true); break;
+    case 'd': clearResults(); testDmxRail(); testDmx(true); break;
+    case 'e': dmxMonitor(); return;
     case 'w': chPwmHold(); return;
     case 'x': adcMonitor(); return;
     case 'l': testWs2812(); showStatus(); return;
