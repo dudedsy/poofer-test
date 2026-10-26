@@ -9,7 +9,8 @@
 void fmt_psi(char *buf, float psi);
 
 struct MenuView {
-  const char *title;          // shown on line 0 (left), e.g. live pressure
+  const char *title;          // line 0, left
+  const char *title_right;    // line 0, right-justified (live pressure); may be null
   const char *items[24];
   int n_items;
   int sel;                    // selected item

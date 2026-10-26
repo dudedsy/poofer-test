@@ -802,16 +802,21 @@ static void menu_tick() {
 
 static void draw_menu_page(Gfx &g) {
   static char items[MI_N][22];
-  static char title[22];
+  static char right[22];
   char p[8];
-  int pos = snprintf(title, sizeof title, "MENU");
+  int pos = 0;
+  right[0] = 0;
   if (disp_valid)
-    for (int c = 0; c < n_ch; c++) { fmt_psi(p, to_psi(c, disp_counts[c])); pos += snprintf(title + pos, sizeof title - pos, " %c%s", 'A' + c, p); }
+    for (int c = 0; c < n_ch; c++) {
+      fmt_psi(p, to_psi(c, disp_counts[c]));
+      pos += snprintf(right + pos, sizeof right - pos, "%s%c:%s", c ? " " : "", 'A' + c, p);
+    }
 
   switch (mpage) {
     case MP_MAIN: {
       MenuView v{};
-      v.title = title;
+      v.title = "MENU";
+      v.title_right = right;
       snprintf(items[MI_COLLECT], 22, "Collect");
       snprintf(items[MI_LIVE], 22, "Live (USB)");
       snprintf(items[MI_DUMP], 22, "Dump (USB)");

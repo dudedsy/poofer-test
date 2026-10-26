@@ -44,7 +44,9 @@ static void draw_pressures(Gfx &g, const PressureView &p) {
 
 void draw_menu(Gfx &g, const MenuView &v) {
   g.clear();
-  g.line(0, v.title);
+  int rw = v.title_right ? Gfx::width(v.title_right) : 0;
+  if (v.title && Gfx::width(v.title) + 6 + rw <= GFX_W) g.line(0, v.title);   // drop the title if no room
+  if (v.title_right) g.text_right(127, 0, v.title_right);
   g.hline(0, 127, 8);
   const int rows = 6;                               // lines 2..7 hold items
   int top = v.sel - rows / 2;
