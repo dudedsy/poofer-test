@@ -11,7 +11,7 @@ void fmt_psi(char *buf, float psi) {
   snprintf(buf, 8, "%s%d.%d", neg ? "-" : "", t / 10, t % 10);
 }
 
-static const char CH_NAME[MAX_CH] = {'A', 'B', 'C'};
+static const char CH_NAME[MAX_CH] = {'0', '1', '2'};   // ADC input numbers
 
 // Pressure readout in the band y = 9..41. One channel big, two medium, three small.
 static void draw_pressures(Gfx &g, const PressureView &p) {

@@ -24,7 +24,7 @@ int main(int argc, char **argv) {
 
   MenuView m{};
   m.title = "MENU";
-  m.title_right = "A:16.3 B:-0.1";
+  m.title_right = "0:16.3 1:-0.1";
   const char *items[] = {"Collect", "Live (USB)", "Dump (USB)", "Channels        2", "Tag             1",
                          "Auto arm     5 psi", "Drop trig  1.0 psi", "Zero sensors", "Captures   12/34",
                          "Delete all"};

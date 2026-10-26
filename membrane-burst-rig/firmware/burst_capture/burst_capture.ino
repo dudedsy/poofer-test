@@ -654,10 +654,10 @@ static void cal_fit() {
     }
     cal_err[c] = e;
     if (cal_good && (m < 0.75 * COUNTS_PER_PSI || m > 1.25 * COUNTS_PER_PSI)) {
-      cal_good = false; snprintf(cal_why, sizeof cal_why, "%c gain off >25%%", 'A' + c);
+      cal_good = false; snprintf(cal_why, sizeof cal_why, "%c gain off >25%%", '0' + c);
     }
     if (cal_good && fabs(b - 409.5) > 150) {
-      cal_good = false; snprintf(cal_why, sizeof cal_why, "%c zero off", 'A' + c);
+      cal_good = false; snprintf(cal_why, sizeof cal_why, "%c zero off", '0' + c);
     }
   }
 }
@@ -788,7 +788,7 @@ static void menu_tick() {
     char a[22] = "", b[22] = "";
     for (int c = 0; c < n_ch && good; c++) if (fabsf(disp_counts[c] - 409.5f) > 120.0f) good = false;
     int pos = 0;
-    for (int c = 0; c < n_ch; c++) pos += snprintf(b + pos, sizeof b - pos, "%c%d ", 'A' + c, (int)(disp_counts[c] + 0.5f));
+    for (int c = 0; c < n_ch; c++) pos += snprintf(b + pos, sizeof b - pos, "%c:%d ", '0' + c, (int)(disp_counts[c] + 0.5f));
     if (good) {
       for (int c = 0; c < n_ch; c++) cfg.zero[c] = (uint16_t)(disp_counts[c] + 0.5f);
       bool saved = settings_save(cfg);
@@ -809,7 +809,7 @@ static void draw_menu_page(Gfx &g) {
   if (disp_valid)
     for (int c = 0; c < n_ch; c++) {
       fmt_psi(p, to_psi(c, disp_counts[c]));
-      pos += snprintf(right + pos, sizeof right - pos, "%s%c:%s", c ? " " : "", 'A' + c, p);
+      pos += snprintf(right + pos, sizeof right - pos, "%s%c:%s", c ? " " : "", '0' + c, p);
     }
 
   switch (mpage) {
@@ -879,7 +879,7 @@ static void draw_menu_page(Gfx &g) {
       char b[22] = "";
       int pos2 = 0;
       if (disp_valid)
-        for (int c = 0; c < n_ch; c++) pos2 += snprintf(b + pos2, sizeof b - pos2, "%c%d ", 'A' + c, (int)(disp_counts[c] + 0.5f));
+        for (int c = 0; c < n_ch; c++) pos2 += snprintf(b + pos2, sizeof b - pos2, "%c:%d ", '0' + c, (int)(disp_counts[c] + 0.5f));
       const char *L[] = {"ZERO SENSORS", "vent the rig fully", "", "counts now:", b, "",
                          zeroing ? "measuring..." : "SET zero", zeroing ? "" : "DN cancel"};
       draw_message(g, L, 8);
@@ -891,7 +891,7 @@ static void draw_menu_page(Gfx &g) {
       snprintf(b, sizeof b, "gauge reads %3d psi", cal_gauge);
       int pos2 = snprintf(c, sizeof c, "now");
       if (disp_valid)
-        for (int ch = 0; ch < n_ch; ch++) pos2 += snprintf(c + pos2, sizeof c - pos2, " %c%d", 'A' + ch, (int)(disp_counts[ch] + 0.5f));
+        for (int ch = 0; ch < n_ch; ch++) pos2 += snprintf(c + pos2, sizeof c - pos2, " %c:%d", '0' + ch, (int)(disp_counts[ch] + 0.5f));
       if (cal_n) {
         int pos3 = snprintf(d, sizeof d, "last %d:", (int)cal_psi[cal_n - 1]);
         for (int ch = 0; ch < n_ch; ch++) pos3 += snprintf(d + pos3, sizeof d - pos3, " %d", (int)(cal_cnt[cal_n - 1][ch] + 0.5f));
@@ -911,7 +911,7 @@ static void draw_menu_page(Gfx &g) {
       for (int ch = 0; ch < n_ch; ch++) {
         char e[8]; fmt_psi(e, cal_err[ch]);
         int g100 = (int)(cal_cpp[ch] * 100.0f + 0.5f);   // no float printf on the target
-        snprintf(r[ch], sizeof r[ch], "%c %2d.%02d/psi z%d e%s", 'A' + ch, g100 / 100, g100 % 100,
+        snprintf(r[ch], sizeof r[ch], "%c %2d.%02d/psi z%d e%s", '0' + ch, g100 / 100, g100 % 100,
                  (int)(cal_zero[ch] + 0.5f), e);
         L[1 + ch] = r[ch];
       }

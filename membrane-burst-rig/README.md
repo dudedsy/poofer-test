@@ -58,24 +58,24 @@ The sensors land on the J3 stack socket. Each ADC line already has a 4.7 kOhm se
 
 | Signal | J3 pin | Module pin |
 |---|---|---|
-| Sensor A out | 19 (ADC0, via R29) | GP26 |
-| Sensor B out | 21 (ADC1, via R28) | GP27 |
-| Sensor C out | 23 (ADC2, via R27) | GP28 |
+| Channel 0 sensor out | 19 (ADC0, via R29) | GP26 |
+| Channel 1 sensor out | 21 (ADC1, via R28) | GP27 |
+| Channel 2 sensor out | 23 (ADC2, via R27) | GP28 |
 | Sensor + (3.3 V mode) | 2 (+3V3) | |
 | Sensor - | 20 or 22 (GND) | |
 
 - **Filter cap:** fit 1 nF C0G 0805 in the DNP shunt footprints on the module side of the series resistor: C17 for ADC0, C16 for ADC1, C15 for ADC2. With the 4.7 kOhm that is a ~34 kHz corner (about 5 us of lag) and it gives the ADC's sample-and-hold a charge reservoir when it switches channels. Don't use the 10 nF the base board spec suggests for those footprints: that is ~50 us of lag on top of the sensor. (Moderate confidence on the RP2040 sampling-charge argument; the bring-up crosstalk check below tests it.)
 - **Power:** the UI board's OLED and LEDs run from the base board's +5V, which only exists with 24 V on J4. On USB power alone the firmware runs and dump mode works, but the display stays dark. Standalone collection needs 24 V.
 - **Reference:** the RP2040-Zero feeds its ADC reference from 3V3 through 200 Ohm (R6) with 2.2 uF (C11). The ADC's ~150 uA leaves the reference roughly 30 mV below the 3V3 that powers the sensor (per the Pico datasheet, varies chip to chip), so readings run ~1% high. The fit normalizes each capture, so tau is unaffected; the Calibrate menu step absorbs it for the psi display and burst pressure.
-- **Crosstalk check at bring-up:** with 2 channels, leave sensor B vented and pressurize A to ~50 psi. B's reading should not move by more than a count or two. If it follows A, fit the C16/C17 caps (or larger) and recheck.
+- **Crosstalk check at bring-up:** with 2 channels, leave the channel 1 sensor vented and pressurize channel 0 to ~50 psi. Channel 1's reading should not move by more than a count or two. If it follows A, fit the C16/C17 caps (or larger) and recheck.
 
 ### On a bare RP2040-Zero
 
 | Signal | RP2040-Zero pin |
 |---|---|
-| Sensor A | GP26 (ADC0) |
-| Sensor B | GP27 (ADC1) |
-| Sensor C | GP28 (ADC2) |
+| Channel 0 sensor | GP26 (ADC0) |
+| Channel 1 sensor | GP27 (ADC1) |
+| Channel 2 sensor | GP28 (ADC2) |
 | 5 V rail divider (5 V mode only) | GP29 (ADC3) |
 
 ### 3.3 V supply
@@ -119,6 +119,8 @@ Acquisition (all modes):
 - **Capture window:** 20 ms before the trigger and 80 ms after (was 50 / 200). On synthetic data the fit recovers tau to within 0.3% with this window; 10 / 50 was also fine and 5 / 30 started biasing the slowest (4 ms) sensor by ~1%. 20 / 80 leaves room for real sensors slower than the synthetic ones. `PRE_MS` / `POST_MS` are compile-time constants.
 
 ### Modes and buttons
+
+Channels are numbered by ADC input: 0, 1, 2 = ADC0, ADC1, ADC2 (GP26, GP27, GP28). With N channels selected the firmware uses 0 to N-1, so wire sensors from channel 0 up without gaps; an unconnected channel floats and can false-arm or false-trigger.
 
 At boot the OLED shows a menu. UP / DN move, SET selects. **Hold SET** (0.8 s) to get back to the menu from any mode. Without the UI board (no I2C pull-ups) it boots straight into Live mode.
 
