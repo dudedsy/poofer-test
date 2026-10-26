@@ -672,7 +672,7 @@ static void show_msg(int ms, const char *a, const char *b = "", const char *c = 
 
 static void edit_value(int item, int dir) {
   switch (item) {
-    case MI_CH:  cfg.n_ch = constrain(cfg.n_ch + dir, 1, MAX_CH); break;
+    case MI_CH:  cfg.n_ch = (uint8_t)((cfg.n_ch - 1 + dir + MAX_CH) % MAX_CH + 1); break;   // wraps 3 -> 1
     case MI_TAG: cfg.tag = (uint8_t)((cfg.tag + 16 + dir) % 16); break;
     case MI_ARM: {
       int v = cfg.arm_psi_x10 < 0 ? 0 : cfg.arm_psi_x10 / 10;   // 0 = off
