@@ -17,16 +17,16 @@ static const char CH_NAME[MAX_CH] = {'0', '1', '2'};   // ADC input numbers
 static void draw_pressures(Gfx &g, const PressureView &p) {
   char v[8], s[24];
   if (!p.valid) {
-    g.text(10, 18, "--.-", 3);
+    g.text(10, 13, "--.-", 3);
     return;
   }
   if (p.n_ch <= 1) {
     fmt_psi(v, p.psi[0]);
-    g.text_right(104, 12, v, 3);
-    g.text(110, 28, "psi");
+    g.text_right(104, 13, v, 3);
+    g.text(110, 29, "psi");
   } else if (p.n_ch == 2) {
     for (int c = 0; c < 2; c++) {
-      int y = 10 + c * 17;
+      int y = 12 + c * 17;
       char nm[2] = {CH_NAME[c], 0};
       g.text(0, y, nm, 2);
       fmt_psi(v, p.psi[c]);
@@ -37,7 +37,7 @@ static void draw_pressures(Gfx &g, const PressureView &p) {
     for (int c = 0; c < p.n_ch && c < MAX_CH; c++) {
       fmt_psi(v, p.psi[c]);
       snprintf(s, sizeof s, "%c %7s psi", CH_NAME[c], v);
-      g.line(1 + c, s);
+      g.text(0, 12 + c * 10, s);
     }
   }
 }
@@ -77,7 +77,7 @@ void draw_collect(Gfx &g, const CollectView &v) {
   if (v.storage_ok) snprintf(s, sizeof s, "%d free", v.free_slots);
   else snprintf(s, sizeof s, "NO STORE");
   g.text_right(127, 0, s);
-  g.hline(0, 127, 8);
+  g.hline(0, 127, 9);
   draw_pressures(g, v.p);
 
   switch (v.state) {
@@ -136,7 +136,7 @@ void draw_live(Gfx &g, const LiveView &v) {
   g.clear();
   g.line(0, "LIVE (USB)");
   g.text_right(127, 0, v.host ? "host ok" : "no host");
-  g.hline(0, 127, 8);
+  g.hline(0, 127, 9);
   draw_pressures(g, v.p);
   fmt_psi(a, v.trig_psi);
   snprintf(s, sizeof s, "sent %u  trig %s", v.sent, a);
