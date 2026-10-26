@@ -298,6 +298,7 @@ static void send_entry(const CapHdr &h, const char *type) {
   Serial.print(",\"forced\":");      Serial.print(h.forced);
   Serial.print(",\"err_samples\":"); Serial.print(h.err_samples);
   Serial.print(",\"uptime_ms\":");   Serial.print(h.uptime_ms);
+  Serial.print(",\"chip_temp_c\":"); Serial.print(h.chip_temp_x10 / 10.0f, 1);
   Serial.print(",\"zero\":[");
   for (int c = 0; c < h.n_ch; c++) { if (c) Serial.print(','); Serial.print(h.zero[c]); }
   Serial.print("],\"cpp\":");        print_array(h.cpp, h.n_ch, nullptr, nullptr, 3);
@@ -466,8 +467,31 @@ static bool finish_capture() {
   return true;
 }
 
+// RP2040 die temperature (datasheet formula: 27 C at 0.706 V, -1.721 mV/C). Reads the
+// chip, not the air: a rough ambient figure for the notes. Call only with the ADC
+// stopped. The sensor is switched off again afterwards because its current flows
+// through the Zero's R6 and would shift the ADC reference.
+static float read_chip_temp() {
+  adc_set_round_robin(0);
+  adc_fifo_setup(false, false, 0, false, false);
+  adc_set_temp_sensor_enabled(true);
+  adc_select_input(4);
+  delayMicroseconds(100);
+  uint32_t sum = 0;
+  for (int i = 0; i < 64; i++) sum += adc_read() & 0x0FFF;
+  adc_set_temp_sensor_enabled(false);
+  adc_fifo_drain();
+  float v = sum / 64.0f * 3.3f / 4096.0f;
+  return 27.0f - (v - 0.706f) / 0.001721f;
+}
+
 static void handle_live_capture() {
-  if (finish_capture() && host()) send_ring_capture(++live_sent, pending_forced);
+  if (finish_capture() && host()) {
+    Serial.print("J,{\"t\":\"live_meta\",\"num\":"); Serial.print(live_sent + 1);
+    Serial.print(",\"chip_temp_c\":"); Serial.print(read_chip_temp(), 1);
+    Serial.println('}');
+    send_ring_capture(++live_sent, pending_forced);
+  }
   start_acq();
 }
 
@@ -489,6 +513,8 @@ static void handle_collect_capture() {
   cap_hdr.post_ms = POST_MS;
   cap_hdr.trig_drop = trig_counts();
   cap_hdr.uptime_ms = millis();
+  float tc = read_chip_temp();
+  cap_hdr.chip_temp_x10 = (int16_t)(tc * 10.0f + (tc >= 0 ? 0.5f : -0.5f));
   for (int c = 0; c < 4; c++) { cap_hdr.zero[c] = cfg.zero[c]; cap_hdr.cpp[c] = cfg.cpp[c]; }
   // pre-burst level: up to 5 ms before the trigger; settled level: last 20 ms
   ring_means(0, (PRE_MS - 5) * f, cap_hdr.pre_mean);
@@ -506,6 +532,7 @@ static void handle_collect_capture() {
     prompt.end_psi[c] = to_psi(c, cap_hdr.end_mean[c]);
   }
   prompt.err_samples = err;
+  prompt.chip_temp_c = (int)(tc + (tc >= 0 ? 0.5f : -0.5f));
   prompt.free_slots = store_free();
   prompt.storage_ok = store_ok();
   cstate = CS_PROMPT;

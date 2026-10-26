@@ -129,6 +129,7 @@ def run_live(ser, args):
     cmds = queue.Queue()
     threading.Thread(target=stdin_reader, args=(cmds,), daemon=True).start()
     n_caps = 0
+    live_meta = {}
 
     def save_meta():
         with open(os.path.join(run_dir, "run.json"), "w") as f:
@@ -158,6 +159,8 @@ def run_live(ser, args):
                     print("header:", item[1])
                 elif kind == "slow" and slow is not None:
                     slow.write(f"{time.time():.4f}," + ",".join(f"{v:g}" for v in item[1]) + "\n")
+                elif kind == "json" and item[1].get("t") == "live_meta":
+                    live_meta = {k: v for k, v in item[1].items() if k not in ("t", "num")}
                 elif kind in ("info", "json"):
                     print("board:", item[1])
                 elif kind == "capture":
@@ -167,7 +170,8 @@ def run_live(ser, args):
                     np.savez_compressed(base + ".npz", counts=counts)
                     hdr.update(host_time=dt.datetime.now().isoformat(), label=args.label, notes=args.notes,
                                rail_ch=(run_meta["header"] or {}).get("rail_ch", -1),
-                               firmware=(run_meta["header"] or {}).get("fw"), source="live")
+                               firmware=(run_meta["header"] or {}).get("fw"), source="live", **live_meta)
+                    live_meta = {}
                     with open(base + ".json", "w") as f:
                         json.dump(hdr, f, indent=2)
                     pre = counts[: hdr["trig_frame"]].mean(axis=0)

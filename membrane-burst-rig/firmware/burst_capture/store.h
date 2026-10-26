@@ -20,7 +20,7 @@
 
 struct CapHdr {
   uint32_t magic;
-  uint16_t version;          // 2 (added cpp)
+  uint16_t version;          // 3 (added cpp, chip temperature)
   uint16_t hdr_bytes;
   uint32_t id;               // capture number, unique and increasing
   uint32_t session;          // collect-mode session number
@@ -40,6 +40,8 @@ struct CapHdr {
   float    cpp[4];           // per-channel counts per psi (calibration gain)
   float    pre_mean[4];      // counts
   float    end_mean[4];      // counts
+  int16_t  chip_temp_x10;    // RP2040 die temperature at capture, 0.1 C (rough ambient)
+  uint16_t reserved;
   uint32_t data_bytes;
   uint32_t data_crc;
   uint32_t hdr_crc;          // CRC32 of every byte above

@@ -45,6 +45,7 @@ struct PromptView {
   float p0_psi[MAX_CH];       // pre-burst pressure
   float end_psi[MAX_CH];      // settled pressure at end of capture
   unsigned err_samples;
+  int chip_temp_c;
   int free_slots;             // slots free before this capture is stored
   bool storage_ok;
 };

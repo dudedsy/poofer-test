@@ -10,3 +10,5 @@ void adc_select_input(int ch);
 void adc_set_round_robin(uint32_t mask);
 void adc_fifo_setup(bool en, bool dreq, int thresh, bool err, bool shift);
 void adc_set_clkdiv(float div);
+void adc_set_temp_sensor_enabled(bool en);
+uint16_t adc_read();

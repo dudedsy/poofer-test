@@ -17,6 +17,7 @@
 
 uint32_t millis();
 void delay(uint32_t ms);
+void delayMicroseconds(uint32_t us);
 void pinMode(int pin, int mode);
 int digitalRead(int pin);
 void digitalWrite(int pin, int v);

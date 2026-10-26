@@ -47,6 +47,7 @@ static uint64_t vt_us = 0;
 static void sim_advance(uint64_t us);
 uint32_t millis() { return (uint32_t)(vt_us / 1000); }
 void delay(uint32_t ms) { sim_advance((uint64_t)ms * 1000); }
+void delayMicroseconds(uint32_t us) { sim_advance(us); }
 
 // ---------------------------------------------------------------- gpio
 static bool bare = false;
@@ -111,6 +112,8 @@ static uint64_t next_block_us = 0;
 static uint64_t acq_sample = 0;          // samples since adc_run(true)
 static uint64_t acq_t0_us = 0;
 
+static bool temp_en = false;
+static int adc_input = 0;
 void adc_init() {}
 void adc_gpio_init(int) {}
 void adc_run(bool run) {
@@ -118,10 +121,17 @@ void adc_run(bool run) {
   adc_running = run;
 }
 void adc_fifo_drain() {}
-void adc_select_input(int) {}
+void adc_select_input(int ch) { adc_input = ch; }
 void adc_set_round_robin(uint32_t m) { rr_mask = m ? m : 1; }
 void adc_fifo_setup(bool, bool, int, bool, bool) {}
 void adc_set_clkdiv(float) {}
+void adc_set_temp_sensor_enabled(bool en) { temp_en = en; }
+uint16_t adc_read() {                     // one-shot: only the die temperature is modelled
+  if (adc_running) fprintf(stderr, "SIMERR adc_read while free-running\n");
+  if (adc_input != 4 || !temp_en) { fprintf(stderr, "SIMERR adc_read of input %d (temp sensor %s)\n", adc_input, temp_en ? "on" : "off"); return 0; }
+  sim_advance(2);
+  return 881;                             // 0.7098 V: 25 C by the datasheet formula
+}
 
 dma_channel_config dma_channel_get_default_config(int) { return dma_channel_config{-1}; }
 void channel_config_set_transfer_data_size(dma_channel_config *, int) {}

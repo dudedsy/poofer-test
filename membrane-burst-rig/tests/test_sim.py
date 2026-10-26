@@ -102,6 +102,7 @@ def test_collect_auto_arm_keep_and_dump():
         meta = json.load(open(base + ".json"))
         assert counts.shape == (15000, 2) and meta["crc_ok"] and meta["framing_ok"] and not meta["problems"]
         assert abs(meta["p0_psi"][0] - 30) < 0.3, meta["p0_psi"]
+        assert abs(meta["chip_temp_c"] - 25) < 0.5, meta["chip_temp_c"]
 
         # the analysis loads it with the 20/80 window settings
         import blowdown_fit
@@ -213,6 +214,8 @@ def test_live_mode_bare_board():
     assert hdr["mode"] == "live" and hdr["ui"] is False
     caps = [i for i in items if i[0] == "capture"]
     assert len(caps) == 1 and caps[0][1]["framing_ok"] and caps[0][2].shape == (15000, 2)
+    lm = [i[1] for i in items if i[0] == "json" and i[1].get("t") == "live_meta"]
+    assert len(lm) == 1 and abs(lm[0]["chip_temp_c"] - 25) < 0.5, lm
     c = caps[0][2].astype(float)
     assert c[:2000, 0].mean() > 1300 and c[-2000:, 0].mean() < 430
     assert sum(1 for i in items if i[0] == "slow") > 500

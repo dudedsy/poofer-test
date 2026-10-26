@@ -197,7 +197,7 @@ python host/burst_logger.py COM5 --dump --tags 1=mylar_base --erase
 ```
 
 - One folder per tag, `runs/<time>_<tag label>/capture_<id>.npz/.json`, so the analysis globs work unchanged. Tags without a label become `tag<N>`.
-- Each capture's json carries the board's id, session, tag, zeros, gains (`cpp`, counts per psi), pre-burst psi, ADC error count and `crc_ok`.
+- Each capture's json carries the board's id, session, tag, zeros, gains (`cpp`, counts per psi), pre-burst psi, ADC error count and `crc_ok`, and `chip_temp_c`: the RP2040 die temperature read right after the capture. It reads the chip, not the gas, so treat it as rough ambient for the notes and for `T0_K`. Live captures carry it too.
 - Captures already copied (same id and CRC under `--outdir`) are skipped, so dumping twice is harmless.
 - `--erase` deletes each capture from the board only after its copy is written and its CRC, framing and length check out. Without it, nothing is deleted; use the menu to clear the board.
 
