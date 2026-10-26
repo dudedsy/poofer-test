@@ -1079,6 +1079,10 @@ void setup() {
   }
   if (i2c_bus) settings_load(cfg);           // falls back to defaults if FRAM is blank
   else settings_defaults(cfg);
+  // Let +5V settle before starting the panel: the RP2040 runs as soon as its 3.3 V
+  // is up, which on a slow-rising 24 V supply can be while +5V (and so the panel's
+  // 4.0 V VBAT) is still low. Holding SET later also restarts the panel.
+  if (i2c_bus) delay(300);
   have_ui = i2c_bus && ui_begin();
   store_begin();
   uint32_t mx = store_max_id();
@@ -1111,6 +1115,7 @@ void loop() {
 
   uint8_t ev = ui_buttons();
   if (ev && ui_blanked()) { ev = 0; redraw_now = true; }   // a press only wakes the panel
+  if (ev & EV_SET_LONG) { ui_reset_display(); redraw_now = true; }   // any long SET also restarts the panel
   if (ev) {
     redraw_now = true;
     if (mode == MODE_MENU) menu_event(ev);

@@ -34,6 +34,15 @@ static bool tca_write(uint8_t reg, uint8_t a, uint8_t b) {
 }
 static bool tca_outputs() { return tca_ok && tca_write(0x02, out0, out1); }
 
+static bool tca_read(uint8_t reg, uint8_t *v) {
+  Wire.beginTransmission(TCA_ADDR);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom(TCA_ADDR, (size_t)1) != 1) return false;
+  *v = Wire.read();
+  return true;
+}
+
 static bool oled_cmds(const uint8_t *c, size_t n) {
   Wire.beginTransmission(OLED_ADDR);
   Wire.write(0x00);                            // Co=0, D/C#=0: command stream
@@ -145,8 +154,43 @@ void ui_blank() {
 
 bool ui_blanked() { return tca_ok && !oled_awake; }
 
+void ui_reset_display() {
+  if (!tca_ok) return;
+  static const uint8_t off[] = {0xAE, 0x8D, 0x10};
+  oled_cmds(off, sizeof off);                  // may NAK if the panel is wedged; ignored
+  tca_write(0x06, 0x00, 0xC0);                 // re-assert pin directions too
+  out0 &= ~P0_VBAT_EN;
+  tca_outputs();
+  vbat_off_ms = millis();
+  oled_awake = false;
+  oled_need_init = true;
+  shadow_valid = false;
+}
+
 void ui_service() {
-  if (!tca_ok || !oled_awake) return;
+  if (!tca_ok) return;
+  // The TCA9555 has no reset pin and only resets on power-on. A supply dip that
+  // resets it (but not the RP2040) turns every pin back into an input: LEDs off,
+  // VBAT off, panel held in reset. Check its config register once a second and
+  // restart the expander and panel if it no longer matches.
+  static uint32_t last_tca_check = 0;
+  if (millis() - last_tca_check > 1000) {
+    last_tca_check = millis();
+    uint8_t cfg0 = 0xFF;
+    if (tca_read(0x06, &cfg0) && cfg0 != 0x00) {
+      bool was_awake = oled_awake;
+      out0 &= ~(P0_VBAT_EN | P0_RES_N);        // come back with the panel off and in reset
+      tca_write(0x02, out0, out1);
+      tca_write(0x06, 0x00, 0xC0);
+      vbat_off_ms = millis();
+      oled_awake = false;
+      oled_need_init = true;
+      shadow_valid = false;
+      if (was_awake && have_frame) ui_show(last_frame);
+      return;
+    }
+  }
+  if (!oled_awake) return;
   // The panel datasheet recommends periodically re-sending commands and data so
   // noise can't leave the controller in a bad state.
   if (oled_need_init || millis() - last_refresh_ms > 5000) {

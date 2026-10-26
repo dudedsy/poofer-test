@@ -241,6 +241,16 @@ def test_blank_and_wake():
         assert not any(i.startswith("#captured") for i in infos(items))
 
 
+def test_display_recovery():
+    with tempfile.TemporaryDirectory() as tmp:
+        s = lambda n: "!screen " + os.path.join(tmp, f"{n}.pbm")
+        # expander reset by a supply dip: panel goes dark, firmware notices and restarts it
+        # holding SET restarts the panel from any state
+        items, err = run(["!wait 400", s(1), "!tca_por", "!wait 10", s(2), "!wait 1500", s(3),
+                          "!btn SET 1000", "!wait 400", s(4)])
+        assert screens_lit(err) == [True, False, True, True], screens_lit(err)
+
+
 if __name__ == "__main__":
     if not os.path.exists(SIM):
         sys.exit("build the simulator first: make -C tools/sim")

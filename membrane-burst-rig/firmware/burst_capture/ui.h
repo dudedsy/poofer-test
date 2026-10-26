@@ -17,6 +17,7 @@ bool ui_present();
 void ui_set_led(int n, LedColor c);   // n = 0..3 (LED1..LED4)
 void ui_show(const Gfx &g);           // pushes changed pages; wakes the panel if blanked
 void ui_blank();                      // panel off (burn-in), ui_show() wakes it
+void ui_reset_display();              // full panel restart (VBAT off, reset, init) on the next ui_show()
 bool ui_blanked();
 void ui_service();                    // periodic refresh / re-init, call from loop()
 uint8_t ui_buttons();                 // debounced events since last call

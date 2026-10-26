@@ -14,6 +14,7 @@
 //            !screen <file.pbm>        write the OLED's display RAM as an image
 //            !leds                     print the four RGB LED colours to stderr
 //            !mark <text>              echo <text> to stderr (log sync)
+//            !tca_por                  power-on-reset the TCA9555 only (supply dip)
 //            !quit
 // stdout : the board's USB serial output (binary safe)
 // stderr : simulator diagnostics; lines starting with "SIMERR" are bugs caught by
@@ -320,7 +321,16 @@ size_t SimWire::requestFrom(int a, size_t n, bool) {
   nrx_ = 0; rpos_ = 0;
   if (bare) return 0;
   if (a == 0x50) { for (size_t i = 0; i < n; i++) { rx_[nrx_++] = fram[fram_ptr]; fram_ptr = (fram_ptr + 1) & 0x1FFF; } }
-  else if (a == 0x20) { for (size_t i = 0; i < n; i++) rx_[nrx_++] = 0; }
+  else if (a == 0x20) {
+    for (size_t i = 0; i < n; i++) {
+      uint8_t r = tca.reg, v = 0;
+      if (r <= 1) v = 0;
+      else if (r <= 3) v = tca.out[r - 2];
+      else if (r >= 6 && r <= 7) v = tca.cfg[r - 6];
+      rx_[nrx_++] = v;
+      tca.reg = (r & ~1) | ((r + 1) & 1);
+    }
+  }
   else return 0;
   sim_advance((n + 1) * 9 * 1000000ULL / 400000ULL);
   return nrx_;
@@ -384,6 +394,11 @@ static bool do_cmd(const std::string &c) {
   } else if (sscanf(c.c_str(), "!p %lf %lf", &x, &y) >= 1) {
     p_from = rig_psi(vt_us); p_to = x; ramp_t0 = vt_us; ramp_us = (uint64_t)(std::max(y, 0.001) * 1000);
     bursting = false;
+  } else if (c == "!tca_por") {             // supply dip resets the expander only
+    bool on = oled.on;
+    tca = Tca();
+    oled_reset();                              // RES# falls as the pins become inputs
+    fprintf(stderr, "SIM tca power-on reset (display was %s)\n", on ? "on" : "off");
   } else if (c == "!burst") {
     p_burst = rig_psi(vt_us); bursting = true; burst_t0 = vt_us;
   } else if (sscanf(c.c_str(), "!screen %255s", a) == 1) write_screen(a);

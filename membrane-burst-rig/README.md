@@ -143,7 +143,7 @@ Menu settings (stored in the base board FRAM, so they survive power cycles):
 | Captures | list of stored captures (newest first: id, tag, pre-burst psi, F = forced). SET on one asks to delete it |
 | Delete all | asks for confirmation; needs a **long** SET press |
 
-Status LEDs on the UI board: LED1 green = menu / waiting, red = armed or triggered, blue = keep/drop prompt or dump mode, magenta = saving, cyan = live. LED2 amber = rig above 2 psi. The OLED blanks after 5 minutes with no button presses and the rig at 0 psi (burn-in); any button wakes it without acting, and so does pressurizing the rig.
+Status LEDs on the UI board: LED1 green = menu / waiting, red = armed or triggered, blue = keep/drop prompt or dump mode, magenta = saving, cyan = live. LED2 amber = rig above 2 psi. The OLED blanks after 5 minutes with no button presses and the rig at 0 psi (burn-in); any button wakes it without acting, and so does pressurizing the rig. **If the screen stays dark** (for example after powering up from a slow-rising supply), hold SET: every long SET press also restarts the panel (VBAT off, reset, full init). The firmware also waits 300 ms at boot before starting the panel, and restarts it automatically if the UI board's expander was reset by a supply dip.
 
 ### Storage
 
