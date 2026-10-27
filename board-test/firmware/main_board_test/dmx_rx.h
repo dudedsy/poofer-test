@@ -114,7 +114,9 @@ struct DmxStats {
   uint32_t errFrames;             // frames containing FE / OE / PE
   uint32_t altSc;                 // frames with a start code other than 0x00
   uint8_t  lastAltSc;
-  uint32_t stray;                 // data bytes before the first break
+  uint32_t presync;               // words before the first break (listening started mid-frame:
+                                  // the UART misreads data bits as start bits, so FE here is not a line fault)
+  uint32_t stray;                 // data bytes after a break but outside a frame (past slot 512)
   uint16_t slotsMin, slotsMax;
   uint32_t perMinUs, perMaxUs;    // break-to-break
   uint64_t perSumUs; uint32_t perN;
@@ -189,6 +191,7 @@ static inline void dmx_feed(DmxRx* d, uint32_t dr, uint32_t now) {
     d->inFrame = true; d->frameErr = false; d->idx = 0;
     return;
   }
+  if (!d->haveBreak) { d->st.presync++; return; }
   if (dr & (DMX_DR_FE | DMX_DR_OE | DMX_DR_PE)) {
     if (dr & DMX_DR_FE) d->st.fe++;
     if (dr & DMX_DR_OE) d->st.oe++;

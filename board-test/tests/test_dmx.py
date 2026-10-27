@@ -166,7 +166,28 @@ class TestPattern(unittest.TestCase):
         s = Stream().byte(0x55).byte(0x66)          # mid-frame when we started listening
         s.frame(b"\x01\x02\x03", sc=0xCC).frame(an.pattern_frame(9))
         r = run(s.end())
-        self.assertEqual((r["stray"], r["altSc"], r["lastAltSc"], r["frames"], r["patOk"]), (2, 1, 0xCC, 1, 1))
+        self.assertEqual((r["presync"], r["stray"], r["altSc"], r["lastAltSc"], r["frames"], r["patOk"]), (2, 0, 1, 0xCC, 1, 1))
+
+    def test_started_mid_frame_errors_ignored(self):
+        # Listening starts mid-frame: the UART is misaligned until the first break and
+        # logs framing errors. Seen on hardware 2026-10-27 (8 FE, 0 frames dropped).
+        s = Stream()
+        for b in range(8):
+            s.byte(b, FE)
+        s.byte(0x42)
+        for k in range(3):
+            s.frame(an.pattern_frame(k))
+        r = run(s.end())
+        self.assertEqual((r["presync"], r["fe"], r["errFrames"], r["frames"], r["patOk"]), (9, 0, 0, 3, 3))
+
+    def test_framing_error_between_frames_still_counted(self):
+        s = Stream().frame(an.pattern_frame(1))
+        s.brk().byte(0)
+        for b in an.pattern_frame(2):
+            s.byte(b)
+        s.byte(0x00, FE)                           # junk after slot 512, after sync
+        r = run(s.end())
+        self.assertEqual((r["fe"], r["errFrames"], r["frames"], r["presync"]), (1, 0, 2, 0))
 
     def test_513_slots_ends_frame(self):
         s = Stream().brk().byte(0)
