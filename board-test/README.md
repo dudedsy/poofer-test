@@ -4,7 +4,7 @@ Firmware for bench-testing the production boards: the DMX base board (Rev A), th
 
 `host/artnet_send.py` is the DMX source for the receive test: it runs on the controller Pi and sends Art-Net to the CR011R node, which puts DMX on the XLR into the base board's J1.
 
-**Status:** run on hardware. A base board with UI board and OLED passes the full sequence on 24 V (all status LEDs green). The solenoid test (`v`) and igniter test (`g`) have been run on one board each. **The DMX receive test (`d`, `e`) and `artnet_send.py` are new and not yet run on hardware**: the parser is covered by host tests on synthetic UART streams, the sender by a loopback test, and the firmware builds and links against arduino-pico 6.3.0.
+**Status:** run on hardware. A base board with UI board and OLED passes the full sequence on 24 V (all status LEDs green). The solenoid test (`v`) and igniter test (`g`) have been run on one board each. DMX receive (`d`) passes on one base board with the Pi + CR011R sending `artnet_send.py`'s pattern: 30 Hz, 512 slots, every slot correct. The CR011R puts out one DMX frame per Art-Net packet (pattern changed on all but one frame), not a fixed refresh. The `e` monitor and the Art-Net loss test are not yet run.
 
 **Bench only.** The full run drives the CH1-CH6 gate lines and, if a solenoid board is detected, opens its valve. Keep the gas closed and nothing connected to a burner. An igniter wired to the selected channel will spark during the CH walk.
 
@@ -109,7 +109,7 @@ Run the sender, then `d` (graded) or `e` (live). What the results mean:
 |---|---|
 | DMX receive FAIL, nothing on RO | No signal reaching GP1. Sender running? Node in Art-Net to DMX mode? Then VISOOUT TP to DMX_ISO_GND (~3.3 V; 0 V = L1 open or U3's converter dead), +3V3_DMX TP, scope DMX_RO TP |
 | DMX receive FAIL, bytes but no clean frame | Mostly framing errors: A/B reversed in the harness or node, or a very noisy line |
-| DMX line errors | Framing errors = noise, missing termination, reflections. Overruns = the firmware fell behind (a firmware bug, not hardware) |
+| DMX line errors | Framing errors = noise, missing termination, reflections. Overruns = the firmware fell behind (a firmware bug, not hardware). Anything before the first break is ignored: listening usually starts mid-frame, and the UART misreads data bits until it syncs |
 | DMX pattern FAIL | Wrong data in a clean frame. Random bits = noise; everything wrong from one slot on = a dropped or extra byte. Prints the first bad slot, got vs expected |
 | DMX torn frames (INFO) | A frame that is half one packet and half the next: the node updated its buffer mid-frame. Harmless for the poofers |
 | DMX padded frames (INFO) | Pattern then zeros: the sender sent fewer slots (`-n`) than the node outputs |

@@ -883,12 +883,13 @@ static void dmxGrade(const DmxStats& s, uint32_t ms, bool fromMenu) {
                   s.perMinUs / 1000.0f, s.perSumUs / 1000.0f / s.perN, s.perMaxUs / 1000.0f);
 
   uint32_t lineErr = s.fe + s.oe + s.pe;
-  if (!lineErr && !s.errFrames) rec(G_BASE, PASS, "DMX line errors", "none in %lu bytes", (unsigned long)s.bytes);
+  // Words before the first break are not counted (listening can start mid-frame, misaligned).
+  uint32_t synced = s.bytes - s.presync;
+  if (!lineErr && !s.errFrames) rec(G_BASE, PASS, "DMX line errors", "none in %lu bytes after first break", (unsigned long)synced);
   else {
     St st = (s.errFrames * 100 <= s.frames) ? WARN : FAIL;
-    rec(G_BASE, st, "DMX line errors", "%lu framing, %lu overrun, %lu parity in %lu bytes; %lu of %lu frames dropped. Framing: noise, missing termination "
-        "(JP1 on the last unit), reflections. Overrun: firmware fell behind the FIFO (firmware bug, not hardware)",
-        (unsigned long)s.fe, (unsigned long)s.oe, (unsigned long)s.pe, (unsigned long)s.bytes,
+    rec(G_BASE, st, "DMX line errors", "%lu framing, %lu overrun, %lu parity in %lu bytes; %lu/%lu frames dropped. FE: noise, no JP1 termination, reflections. OE: firmware bug",
+        (unsigned long)s.fe, (unsigned long)s.oe, (unsigned long)s.pe, (unsigned long)synced,
         (unsigned long)s.errFrames, (unsigned long)(s.errFrames + s.frames));
   }
   if (s.altSc) rec(G_BASE, INFO, "DMX alt start", "%lu frames with start code 0x%02X (0xCC RDM, 0x17 text, 0xCF SIP): ignored, not an error",
